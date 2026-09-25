@@ -52,6 +52,24 @@ def get_pose_logger_parser() -> argparse.ArgumentParser:
         default="json",
         help="Utmatningsformat på loggen: 'json' (strukturerad JSON per frame) eller 'text' (radvis läsbar text). Standard: json.",
     )
+    parser.add_argument(
+        "--udp-port",
+        type=int,
+        default=5005,
+        help="UDP-port för broadcast av JSON-data (standard: 5005). Sätt till 0 för att inaktivera UDP.",
+    )
+    parser.add_argument(
+        "--broadcast-address",
+        type=str,
+        default="255.255.255.255",
+        help="Broadcast-adress för UDP (standard: 255.255.255.255).",
+    )
+    parser.add_argument(
+        "--no-log",
+        action="store_true",
+        default=False,
+        help="Stäng av lokal utskrift av pose-data på konsolen/loggen (användbart vid ren UDP broadcast).",
+    )
     return parser
 
 
@@ -104,7 +122,16 @@ class GStreamerPoseLoggerApp(GStreamerApp):
 
         self.show_video = getattr(self.options_menu, "show_video", False)
         self.log_format = getattr(self.options_menu, "log_format", "json")
+        self.udp_port = getattr(self.options_menu, "udp_port", 5005)
+        self.broadcast_address = getattr(self.options_menu, "broadcast_address", "255.255.255.255")
+        self.no_log = getattr(self.options_menu, "no_log", False)
+
         user_data.log_format = self.log_format
+        user_data.udp_port = self.udp_port
+        user_data.broadcast_address = self.broadcast_address
+        user_data.no_log = self.no_log
+        if hasattr(user_data, "init_udp"):
+            user_data.init_udp()
 
         setproctitle.setproctitle(POSE_LOGGER_APP_TITLE)
         hailo_logger.debug("Process title set: %s", POSE_LOGGER_APP_TITLE)

@@ -1,14 +1,14 @@
 # Pose Logger Application
 
-Denna applikation är en variant av `pose_estimation` som **inte renderar någon streckgubbe** (skelett-overlay) eller fönster som standard. Istället körs applikationen resurssnålt i headless-läge (med GStreamers `fakesink`) och loggar det fullständiga underlaget för streckgubben (alla 17 anatomiska keypoints med koordinater och konfidens) till loggen.
+Denna applikation är en variant av `pose_estimation` som **inte renderar någon streckgubbe** (skelett-overlay) eller fönster som standard. Istället körs applikationen resurssnålt i headless-läge (med GStreamers `fakesink`) och **broadcastar det fullständiga underlaget för streckgubben via UDP** (alla 17 anatomiska keypoints med koordinater och konfidens) som JSON till godtyckliga klienter på nätverket.
 
 Applikationen använder samma Hailo-modeller som pose estimation (`yolov8s_pose` för Hailo-8L och `yolov8m_pose` för Hailo-8).
 
 ---
 
-## Körning
+## Körning (Sändare)
 
-### Standardkörning (Headless / Ren dataloggning):
+### Standardkörning (Headless + UDP broadcast på port 5005):
 ```bash
 python hailo_apps/python/pipeline_apps/pose_logger/pose_logger.py --input usb
 ```
@@ -23,28 +23,46 @@ python hailo_apps/python/pipeline_apps/pose_logger/pose_logger.py --input /path/
 
 ---
 
-## Tillvalsflaggor
+## Testklient (Mottagare)
 
-* `--show-video`: Öppnar videofönstret men visar **ren video utan streckgubbe/overlay**. Användbart om man vill inspektera kamerabilden utan att skymma motivet med grafik.
-* `--log-format [json|text]`:
-  * `json` (standard): Skriver ut en rad JSON per bildruta med fullständig metadata. Perfekt för datainsamling, pipelines, MQTT, etc.
-  * `text`: Skriver ut formaterad, lättläst text i terminalen per detekterad person och led.
+För att verifiera mottagandet av UDP-broadcast från en annan terminal, dator eller Raspberry Pi på samma nätverk:
 
-### Exempel med textformat:
+### 1. Med det medföljande mottagarskriptet:
 ```bash
-python hailo_apps/python/pipeline_apps/pose_logger/pose_logger.py --input usb --log-format text
+python hailo_apps/python/pipeline_apps/pose_logger/pose_receiver.py
+```
+Eller med kompakt utskrift:
+```bash
+python hailo_apps/python/pipeline_apps/pose_logger/pose_receiver.py --compact
 ```
 
-### Exempel med ren videovisning:
+### 2. Med netcat i terminalen:
 ```bash
-python hailo_apps/python/pipeline_apps/pose_logger/pose_logger.py --input usb --show-video
+nc -u -l 5005
 ```
 
 ---
 
-## Loggformat
+## Tillvalsflaggor
 
-### 1. JSON-format (`--log-format json`)
+* `--udp-port [PORT]`: UDP-port för broadcast (standard: `5005`). Sätt till `0` för att inaktivera UDP.
+* `--broadcast-address [IP]`: Broadcast-adress (standard: `255.255.255.255` för lokalt subnät, eller specificera ett subnät t.ex. `192.168.1.255`).
+* `--no-log`: Tystar den lokala utskriften i terminalen helt och skickar endast datat via UDP broadcast.
+* `--show-video`: Öppnar videofönstret men visar **ren video utan streckgubbe/overlay**. Användbart om man vill inspektera kamerabilden utan att skymma motivet med grafik.
+* `--log-format [json|text]`:
+  * `json` (standard): Skriver ut en rad JSON per bildruta med fullständig metadata på konsolen.
+  * `text`: Skriver ut formaterad, lättläst text i terminalen per detekterad person och led.
+
+### Exempel med anpassad UDP-port och tystat lokalt läge:
+```bash
+python hailo_apps/python/pipeline_apps/pose_logger/pose_logger.py --input usb --udp-port 6000 --no-log
+```
+
+---
+
+## Dataformat (JSON via UDP)
+
+Varje UDP-datagram innehåller en komplett JSON-struktur:
 ```json
 {
   "frame_count": 42,
@@ -84,27 +102,4 @@ python hailo_apps/python/pipeline_apps/pose_logger/pose_logger.py --input usb --
     }
   ]
 }
-```
-
-### 2. Textformat (`--log-format text`)
-```text
---- Frame 42 (1280x720) | Antal personer: 1 ---
-Person [ID: 1, Konfidens: 0.88, Box: (409,108)-(729,612)]
-  nose            : ( 564px,  151px)  konfidens: 0.94
-  left_eye        : ( 579px,  142px)  konfidens: 0.91
-  right_eye       : ( 547px,  144px)  konfidens: 0.92
-  left_ear        : ( 604px,  154px)  konfidens: 0.86
-  right_ear       : ( 531px,  156px)  konfidens: 0.84
-  left_shoulder   : ( 641px,  224px)  konfidens: 0.89
-  right_shoulder  : ( 501px,  229px)  konfidens: 0.91
-  left_elbow      : ( 672px,  320px)  konfidens: 0.82
-  right_elbow     : ( 471px,  324px)  konfidens: 0.85
-  left_wrist      : ( 690px,  404px)  konfidens: 0.78
-  right_wrist     : ( 449px,  410px)  konfidens: 0.80
-  left_hip        : ( 608px,  419px)  konfidens: 0.87
-  right_hip       : ( 522px,  421px)  konfidens: 0.88
-  left_knee       : ( 615px,  536px)  konfidens: 0.84
-  right_knee      : ( 527px,  540px)  konfidens: 0.85
-  left_ankle      : ( 624px,  644px)  konfidens: 0.81
-  right_ankle     : ( 536px,  649px)  konfidens: 0.79
 ```

@@ -1,6 +1,7 @@
 # region imports
 import json
 import os
+import socket
 
 os.environ["GST_PLUGIN_FEATURE_RANK"] = "vaapidecodebin:NONE"
 
@@ -50,6 +51,37 @@ class user_app_callback_class(app_callback_class):
     def __init__(self):
         super().__init__()
         self.log_format = "json"
+        self.udp_port = 5005
+        self.broadcast_address = "255.255.255.255"
+        self.no_log = False
+        self.sock = None
+        self.udp_enabled = False
+
+    def init_udp(self):
+        """Initierar UDP-socket med broadcast aktiverat."""
+        if self.udp_port > 0:
+            try:
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                self.udp_enabled = True
+                hailo_logger.info(
+                    "UDP broadcast aktiverat till %s:%d", self.broadcast_address, self.udp_port
+                )
+            except OSError as e:
+                hailo_logger.error("Kunde inte skapa UDP broadcast-socket: %s", e)
+                self.udp_enabled = False
+        else:
+            self.udp_enabled = False
+
+    def broadcast_pose_data(self, data_dict: dict):
+        """Skickar pose-data som JSON-datagram via UDP-broadcast."""
+        if not self.udp_enabled or self.sock is None:
+            return
+        try:
+            payload = json.dumps(data_dict).encode("utf-8")
+            self.sock.sendto(payload, (self.broadcast_address, self.udp_port))
+        except OSError as e:
+            hailo_logger.warning("Fel vid UDP broadcast: %s", e)
 
 
 # -----------------------------------------------------------------------------------------------
@@ -134,32 +166,38 @@ def app_callback(element, buffer, user_data):
 
         persons.append(person_data)
 
-    # Logga endast om personer detekterades i aktuell bildruta
+    # Hantera detekterade personer
     if persons:
-        log_format = getattr(user_data, "log_format", "json")
-        if log_format == "json":
-            output = {
-                "frame_count": frame_count,
-                "video_width": width,
-                "video_height": height,
-                "persons": persons,
-            }
-            hailo_logger.info("POSE_DATA: %s", json.dumps(output))
-        else:
-            lines = [
-                f"\n--- Frame {frame_count} ({width}x{height}) | Antal personer: {len(persons)} ---"
-            ]
-            for p in persons:
-                b = p["bbox"]["pixels"]
-                track_str = f"ID: {p['track_id']}, " if p["track_id"] is not None else ""
-                lines.append(
-                    f"Person [{track_str}Konfidens: {p['confidence']:.2f}, Box: ({b['xmin']},{b['ymin']})-({b['xmax']},{b['ymax']})]"
-                )
-                for kp_name, kp in p["keypoints"].items():
+        output = {
+            "frame_count": frame_count,
+            "video_width": width,
+            "video_height": height,
+            "persons": persons,
+        }
+
+        # 1. Skicka via UDP-broadcast till alla lyssnande klienter på nätverket
+        user_data.broadcast_pose_data(output)
+
+        # 2. Skriv ut lokalt på loggen/konsolen om ej --no-log är satt
+        if not getattr(user_data, "no_log", False):
+            log_format = getattr(user_data, "log_format", "json")
+            if log_format == "json":
+                hailo_logger.info("POSE_DATA: %s", json.dumps(output))
+            else:
+                lines = [
+                    f"\n--- Frame {frame_count} ({width}x{height}) | Antal personer: {len(persons)} ---"
+                ]
+                for p in persons:
+                    b = p["bbox"]["pixels"]
+                    track_str = f"ID: {p['track_id']}, " if p["track_id"] is not None else ""
                     lines.append(
-                        f"  {kp_name:<16}: ({kp['pixel_x']:>4}px, {kp['pixel_y']:>4}px)  konfidens: {kp['confidence']:.2f}"
+                        f"Person [{track_str}Konfidens: {p['confidence']:.2f}, Box: ({b['xmin']},{b['ymin']})-({b['xmax']},{b['ymax']})]"
                     )
-            hailo_logger.info("\n".join(lines))
+                    for kp_name, kp in p["keypoints"].items():
+                        lines.append(
+                            f"  {kp_name:<16}: ({kp['pixel_x']:>4}px, {kp['pixel_y']:>4}px)  konfidens: {kp['confidence']:.2f}"
+                        )
+                hailo_logger.info("\n".join(lines))
 
 
 def main():
